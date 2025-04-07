@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -21,16 +22,19 @@ class VAE(nn.Module):
         
         # Encoder
         self.fc1 = nn.Linear(input_dim, intermediate_dim)
+        # self.fc4 = nn.Linear(intermediate_dim, intermediate_dim)
         self.fc_mean = nn.Linear(intermediate_dim, latent_dim)
         self.fc_log_var = nn.Linear(intermediate_dim, latent_dim)
         
         # Decoder
         self.fc2 = nn.Linear(latent_dim, intermediate_dim)
+        # self.fc5 = nn.Linear(intermediate_dim, intermediate_dim)
         self.fc3 = nn.Linear(intermediate_dim, input_dim)
     
     
     def encode(self, x):
         h = F.relu(self.fc1(x))
+        # h = F.relu(self.fc4(h))
         z_mean = self.fc_mean(h)
         z_log_var = self.fc_log_var(h)
         return z_mean, z_log_var
@@ -44,6 +48,7 @@ class VAE(nn.Module):
     
     def decode(self, z):
         h = F.relu(self.fc2(z))
+        # h = F.relu(self.fc5(h))
         return torch.sigmoid(self.fc3(h))
     
     
@@ -62,9 +67,14 @@ class VAE(nn.Module):
     
     def train_model(self, x_train: pd.DataFrame, epochs, batch_size, save_dir=None, verbose=False):
         dataset = torch.utils.data.TensorDataset(torch.tensor(x_train.to_numpy(), dtype=torch.float32))
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=10)
+        print(torch.get_num_threads())
+        torch.set_num_threads(128)
+        print(torch.get_num_threads())
         
         self.optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        # Initialize a scheduler, for instance a StepLR scheduler that reduces the LR every 10 epochs by a factor of 0.1
+        scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.8)
         
         for epoch in range(epochs):
             total_loss = 0
@@ -76,16 +86,69 @@ class VAE(nn.Module):
                 loss.backward()
                 self.optimizer.step()
                 total_loss += loss.item()
-            
+
+            # Step the scheduler after each epoch
+            scheduler.step()
+
             if verbose:
                 print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader.dataset)}")
+
                 
         model_path = os.path.join(save_dir, self.name + ".pt")
         torch.save(self.state_dict(), model_path)
     
         self.determine_classification_threshold(x_train.to_numpy())
     
-    
+
+    def resume_training(self, x_train: pd.DataFrame, additional_epochs: int, batch_size: int,
+                        checkpoint_path: str, save_dir: str = None, verbose: bool = False):
+        # Load the model weights from the checkpoint
+        wt = Path(checkpoint_path) / "model.pt"
+        self.load_state_dict(torch.load(wt))
+        print(f"Checkpoint loaded from {wt}")
+
+        # Prepare the dataset and dataloader
+        dataset = torch.utils.data.TensorDataset(torch.tensor(x_train.to_numpy(), dtype=torch.float32))
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=10)
+        
+        # (Re)initialize the optimizer and learning rate scheduler
+        self.optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        # scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.8)
+        
+        # Optionally adjust thread settings (mirroring your original code)
+        print("Threads before setting:", torch.get_num_threads())
+        torch.set_num_threads(128)
+        print("Threads after setting:", torch.get_num_threads())
+        
+        # Continue training for the specified additional epochs
+        for epoch in range(additional_epochs):
+            total_loss = 0
+            for batch in dataloader:
+                x = batch[0]
+                self.optimizer.zero_grad()
+                x_decoded, z_mean, z_log_var = self(x)
+                loss = self.loss_function(x, x_decoded, z_mean, z_log_var)
+                loss.backward()
+                self.optimizer.step()
+                total_loss += loss.item()
+            
+            # # Update the learning rate scheduler after each epoch
+            # scheduler.step()
+            
+            if verbose:
+                avg_loss = total_loss / len(dataloader.dataset)
+                print(f"Epoch {epoch + 1}/{additional_epochs}, Loss: {avg_loss}")
+        
+        # Save the updated model if a save directory is provided
+        if save_dir is not None:
+            model_path = os.path.join(save_dir, self.name + ".pt")
+            torch.save(self.state_dict(), model_path)
+            print(f"Model saved to {model_path}")
+        
+        # Recalculate any thresholds based on the new model parameters
+        self.determine_classification_threshold(x_train.to_numpy())
+
+
     def calculate_reconstruction_error(self, data):
         self.eval()
         with torch.no_grad():
