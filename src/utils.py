@@ -5,7 +5,11 @@ import warnings
 import time
 import pandas as pd
 
-warnings.filterwarnings('ignore', category=yaml.YAMLLoadWarning)
+# print(yaml.__version__)
+# print(yaml.__file__)
+# print(dir(yaml))
+
+# warnings.filterwarnings('ignore', category=yaml.YAMLLoadWarning)
 pd.set_option('mode.chained_assignment', None)
 
 

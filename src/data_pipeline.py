@@ -148,7 +148,7 @@ class DataPipeline():
                                   kind_to_fc_parameters=None, 
                                   column_id="uid", 
                                   column_sort="timestamp",
-                                  n_jobs=1
+                                  n_jobs=128
                                  ):
         """
         Extracts features from data using tsfresh library.
